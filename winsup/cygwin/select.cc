@@ -342,42 +342,40 @@ select_stuff::wait (fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
   /* Always wait for signals. */
   wait_signal_arrived here (w4[m++]);
 
-  /* Set a fallback millisecond timeout for WMFO. */
+  /* Set a timeout, or not, for WMFO. */
   DWORD dTimeoutMs;
-  if (us >= INFINITE * 1000)
+  if (us == 0)
     {
-      dTimeoutMs = INFINITE - 1;
-    }
-  else if (us < 0)
-    {
-      dTimeoutMs = INFINITE;
+      dTimeoutMs = 0;
     }
   else
     {
-      dTimeoutMs = (us + 999) / 1000;
+      dTimeoutMs = INFINITE;
     }
-  /* Try to create and set a waitable timer, if a finite timeout has
-     been requested.  If successful, disable the fallback timeout. */
+  /* Create and set a waitable timer, if a finite timeout has been
+     requested. */
   LARGE_INTEGER liTimeout;
-  HANDLE hTimeout = CreateWaitableTimer (NULL, TRUE, NULL);
-  if (NULL == hTimeout)
+  HANDLE hTimeout;
+  NTSTATUS status;
+  status = NtCreateTimer(&hTimeout, TIMER_ALL_ACCESS, NULL, NotificationTimer);
+  if (!NT_SUCCESS (status))
     {
-      select_printf("CreateWaitableTimer failed (%d)\n", GetLastError());
+      select_printf("NtCreateTimer failed (%d)\n", GetLastError());
+      return select_error;
     }
   w4[m++] = hTimeout;
-  if (NULL != hTimeout && us >= 0)
+  if (us >= 0)
     {
       liTimeout.QuadPart = -us * 10;
       int setret;
-      if ((setret = SetWaitableTimer (hTimeout, &liTimeout, 0, NULL, NULL, 0)))
+      status = NtSetTimer (hTimeout, &liTimeout, NULL, NULL, FALSE, 0, NULL);
+      if (!NT_SUCCESS(status))
 	{
-	  dTimeoutMs = INFINITE;
-	}
-      else
-	{
-	  select_printf ("SetWaitableTimer failed: %d (%08x)\n", setret, GetLastError());
+	  select_printf ("NtSetTimer failed: %d (%08x)\n", setret, GetLastError());
+	  return select_error;
 	}
     }
+
   /* Optionally wait for pthread cancellation. */
   if ((w4[m] = pthread::get_cancel_event ()) != NULL)
     m++;
